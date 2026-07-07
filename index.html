@@ -71,6 +71,23 @@ label.tgl{display:inline-flex;align-items:center;gap:5px;font-size:13px;font-wei
 .meta b{color:var(--txt2);font-weight:700;font-variant-numeric:tabular-nums}
 .empty{padding:48px 20px;text-align:center;color:var(--txt3);font-size:14px}
 .notice{background:#fff8e6;border:1px solid #f0dfa8;color:#8a6d1a;border-radius:8px;padding:10px 14px;font-size:13px;margin:10px 0}
+.ai-panel{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin:0 0 14px}
+.ai-panel h2{font-size:15px;font-weight:800;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.ai-panel h2 .spacer{flex:1}
+.ai-issue{padding:10px 0;border-top:1px solid var(--line)}
+.ai-issue:first-of-type{border-top:none}
+.ai-issue .head{font-size:14px;font-weight:700;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.ai-issue .imp{color:var(--hot);font-size:12px;letter-spacing:1px;flex:none}
+.ai-issue .tchip{font-size:11px;font-weight:700;color:var(--accent);background:var(--accent-bg);border-radius:5px;padding:0 6px}
+.ai-issue .sum{font-size:13px;color:var(--txt2);margin-top:3px;max-width:70ch}
+.ai-issue .refs{margin-top:5px;display:flex;flex-direction:column;gap:2px}
+.ai-issue .refs a{font-size:12px;color:var(--txt3);text-decoration:none}
+.ai-issue .refs a:hover{color:var(--accent)}
+.ai-issue .refs .rc{color:var(--accent);font-weight:700}
+.keyform{background:#f6f8ff;border:1px solid #dbe4ff;border-radius:8px;padding:12px;margin-top:8px;font-size:13px;line-height:1.8}
+.keyform input{width:100%;max-width:420px;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px;margin:4px 0}
+.ai-meta{font-size:11.5px;color:var(--txt3);margin-top:10px}
+.ai-loading{padding:20px;text-align:center;color:var(--txt2);font-size:13px}
 details.diag{margin-top:24px;font-size:12px;color:var(--txt3)}
 details.diag pre{background:#f0f1f4;border-radius:8px;padding:10px;white-space:pre-wrap;word-break:break-all;max-height:240px;overflow:auto;margin-top:8px}
 footer{margin-top:28px;font-size:12px;color:var(--txt3);line-height:2}
@@ -102,11 +119,13 @@ footer a{color:var(--txt2)}
       <button data-view="topic">주제별</button>
     </div>
     <label class="tgl"><input type="checkbox" id="dedupeChk" checked> 중복 합치기</label>
+    <button class="btn" id="aiBtn">🤖 AI 브리핑</button>
     <input class="search" id="searchBox" placeholder="제목 검색…">
   </div>
 
   <div class="cats" id="topics"></div>
   <div class="cats" id="cats"></div>
+  <div id="aiPanel" style="display:none"></div>
   <div id="noticeArea"></div>
   <div class="list" id="list"><div class="empty">불러오는 중…</div></div>
 
@@ -407,6 +426,46 @@ async function loadDc(){
   return all;
 }
 
+// 7) 미국 커뮤니티: 레딧(경제 서브레딧 상위글) + Hacker News
+async function loadUS(){
+  const all=[];
+  const jobs = [];
+  // HN: 공식 API가 CORS 허용 → 중계 없이 직접
+  jobs.push((async()=>{
+    try{
+      const t = await fetchText("https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=25",{timeout:15000});
+      const d = JSON.parse(t);
+      const items = (d.hits||[]).map(h=>({
+        title:h.title, url:h.url||("https://news.ycombinator.com/item?id="+h.objectID),
+        community:"HN", views:num(h.points), comments:num(h.num_comments),
+        ts:Date.parse(h.created_at)||null, topic:"IT·과학"
+      })).filter(p=>p.title);
+      all.push(...items); log("미국 HN: "+items.length+"건");
+    }catch(e){ log("미국 HN 실패: "+e.message); }
+  })());
+  // 스탁트윗: 미국 개인투자자들의 실시간 화제 종목 (레딧은 모든 무료 중계를 차단해서 제외)
+  jobs.push((async()=>{
+    const base = "https://api.stocktwits.com/api/2/trending/symbols.json";
+    for(const u of [P.corsproxy(base), P.allorigins(base), P.codetabs(base)]){
+      try{
+        const t = await fetchText(u,{timeout:20000});
+        const d = JSON.parse(t.slice(t.indexOf("{")));
+        const items = (d.symbols||[]).slice(0,20).map((s,i)=>({
+          title:"미국주식 화제종목 "+(i+1)+"위 — $"+s.symbol+" "+(s.title||""),
+          url:"https://stocktwits.com/symbol/"+s.symbol,
+          community:"스탁트윗", views:null, comments:null,
+          ts:Date.now(), topic:"경제·재테크"
+        }));
+        if(items.length<3) throw new Error("파싱 "+items.length+"건");
+        all.push(...items); log("미국 스탁트윗: "+items.length+"건");
+        return;
+      }catch(e){ log("미국 스탁트윗 실패: "+(e.name==="AbortError"?"시간초과":e.message)); }
+    }
+  })());
+  await Promise.allSettled(jobs);
+  return all;
+}
+
 /* ============ 소스 정의 ============ */
 const SOURCES = [
   { id:"moamoa", name:"모아모아",
@@ -426,7 +485,8 @@ const SOURCES = [
       .concat([ {url:P.jina("https://jamnanda.com/"),via:"jina-html",headers:{"x-return-format":"html"},parse:parseJamnanda} ]) },
   { id:"todaybest", name:"오늘의베스트",
     attempts: [ {url:P.jina("https://todaybeststory.com/communities"),via:"jina",parse:parseTodaybest} ] },
-  { id:"dcecon", name:"디시 경제갤", topic:"경제·재테크", load: loadDc }
+  { id:"dcecon", name:"디시 경제갤", topic:"경제·재테크", load: loadDc },
+  { id:"usecon", name:"미국(레딧·HN)", load: loadUS }
 ];
 const srcState = {}; // id → {status, count, error}
 SOURCES.forEach(s=>srcState[s.id]={status:"idle",count:0});
@@ -443,7 +503,7 @@ async function loadSource(src){
     try{
       const items = await src.load();
       if(!items.length) throw new Error("가져온 글 없음");
-      items.forEach(p=>{ p.src=[src.id]; p.topic = src.topic || classify(p.title); });
+      items.forEach(p=>{ p.src=[src.id]; p.topic = p.topic || src.topic || classify(p.title); });
       srcState[src.id]={status:"ok",count:items.length};
       log(src.name+" 성공: 총 "+items.length+"건");
       renderStatus();
@@ -647,6 +707,150 @@ function render(){
     ).join("");
   }
 }
+
+/* ============ AI 브리핑 (사용자 본인의 API 키 사용) ============ */
+const AI_MODELS = { "claude-opus-4-8":"오퍼스 (고품질, 1회 약 100~200원)", "claude-haiku-4-5":"하이쿠 (절약형, 1회 약 20~40원)" };
+const BRIEF_SCHEMA = {
+  type:"object",
+  properties:{ issues:{ type:"array", items:{
+    type:"object",
+    properties:{
+      title:{type:"string"}, summary:{type:"string"}, topic:{type:"string"},
+      importance:{type:"integer"}, refs:{type:"array", items:{type:"integer"}}
+    },
+    required:["title","summary","topic","importance","refs"],
+    additionalProperties:false
+  }}},
+  required:["issues"], additionalProperties:false
+};
+function briefPosts(){ // 전체 데이터에서 중복 합친 조회수 상위 120건
+  const saveDedupe=dedupe, saveCat=catFilter, saveTopic=topicFilter, saveQ=query, saveSort=sortBy;
+  dedupe=true; catFilter="all"; topicFilter="all"; query=""; sortBy="views";
+  const posts = buildPosts().slice(0,110);
+  dedupe=saveDedupe; catFilter=saveCat; topicFilter=saveTopic; query=saveQ; sortBy=saveSort;
+  // 조회수가 없는 미국 화제종목은 정렬에서 밀리므로 명시적으로 포함
+  const seen = new Set(posts.map(p=>normTitle(p.title)));
+  rawPosts.filter(p=>p.community==="스탁트윗"||p.community==="HN").forEach(p=>{
+    if(!seen.has(normTitle(p.title))){ seen.add(normTitle(p.title)); posts.push(p); }
+  });
+  return posts.slice(0,150);
+}
+function briefPrompt(posts){
+  const list = posts.map((p,i)=>`${i}|${p.community}|${p.topic}|조회${p.views??"?"}|댓글${p.comments??"?"}|${p.title}`).join("\n");
+  return `너는 한국 온라인 커뮤니티 트렌드 분석가다. 아래는 오늘 여러 커뮤니티 집계 사이트에서 수집한 인기 게시글 목록이다. 형식: 번호|커뮤니티|주제분류|조회수|댓글수|제목
+
+이 목록에서 소음(단순 유머 짤, 일회성 잡담)을 걸러내고, 오늘 알아둘 가치가 있는 핵심 이슈를 5~8개로 정리하라.
+
+규칙:
+- 같은 사건을 다루는 여러 글은 하나의 이슈로 묶는다.
+- title: 이슈를 한 줄로 (한국어).
+- summary: 2~3문장. 무슨 일인지 + 왜 화제인지. 게시글 제목만으로 추정한 부분은 단정하지 말 것 (한국어, 영어 제목은 번역해 반영).
+- topic: 정치/경제·재테크/스포츠/연예·방송/게임/IT·과학/국제/사회·사건/기타 중 하나.
+- importance: 1~5 정수 (5=가장 중요). importance 내림차순으로 정렬.
+- refs: 관련 게시글 번호 배열 (최대 5개, 반드시 실제 관련 글만).
+
+게시글 목록:
+${list}`;
+}
+let briefBusy=false;
+async function runBriefing(force){
+  if(briefBusy) return;
+  const key = localStorage.getItem("tr_apikey");
+  if(!key){ renderKeyForm(); return; }
+  const panel=$("#aiPanel"); panel.style.display="block";
+  // 오늘 것 캐시가 있으면 재사용 (다시 생성 버튼으로 강제)
+  const cached = localStorage.getItem("tr_brief_"+todayKey());
+  if(cached && !force){
+    try{ const c=JSON.parse(cached); renderBriefing(c.issues, c.posts, c.model, true); return; }catch(e){}
+  }
+  const posts = briefPosts();
+  if(posts.length<10){ panel.innerHTML='<div class="ai-loading">요약할 데이터가 부족합니다. 먼저 새로고침으로 글을 불러오세요.</div>'; return; }
+  const model = localStorage.getItem("tr_aimodel") || "claude-opus-4-8";
+  briefBusy=true;
+  panel.innerHTML='<div class="ai-loading">🤖 '+posts.length+'개 인기글을 분석하는 중… (10~30초)</div>';
+  try{
+    const r = await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",
+      headers:{
+        "content-type":"application/json",
+        "x-api-key":key,
+        "anthropic-version":"2023-06-01",
+        "anthropic-dangerous-direct-browser-access":"true"
+      },
+      body:JSON.stringify({
+        model, max_tokens:4000,
+        output_config:{format:{type:"json_schema", schema:BRIEF_SCHEMA}},
+        messages:[{role:"user", content:briefPrompt(posts)}]
+      })
+    });
+    const data = await r.json();
+    if(!r.ok){
+      const msg = (data.error&&data.error.message)||("HTTP "+r.status);
+      let hint = "";
+      if(r.status===401) hint = "API 키가 올바르지 않습니다. 아래에서 키를 다시 입력해 주세요.";
+      else if(r.status===429) hint = "요청 한도 초과입니다. 1분 뒤 다시 시도해 주세요.";
+      else if(r.status===400 && /credit|billing/i.test(msg)) hint = "API 크레딧이 부족합니다. console.anthropic.com에서 충전해 주세요.";
+      panel.innerHTML = '<div class="ai-loading">⚠️ '+esc(hint||"요약 실패")+'<br><small style="color:var(--txt3)">'+esc(msg)+'</small><br><br><button class="btn" onclick="renderKeyForm()">키 설정</button> <button class="btn" onclick="runBriefing(true)">다시 시도</button></div>';
+      log("AI 브리핑 실패: "+r.status+" "+msg);
+      return;
+    }
+    if(data.stop_reason==="refusal"){ panel.innerHTML='<div class="ai-loading">모델이 이 요청을 거절했습니다. 다시 시도해 주세요.</div>'; return; }
+    const text = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("");
+    const parsed = JSON.parse(text);
+    const slim = posts.map(p=>({t:p.title,u:p.url,c:p.community}));
+    try{ localStorage.setItem("tr_brief_"+todayKey(), JSON.stringify({issues:parsed.issues, posts:slim, model})); }catch(e){}
+    renderBriefing(parsed.issues, slim, model, false);
+    log("AI 브리핑 성공: 이슈 "+parsed.issues.length+"개 (토큰 in "+((data.usage||{}).input_tokens||"?")+" / out "+((data.usage||{}).output_tokens||"?")+")");
+  }catch(e){
+    panel.innerHTML='<div class="ai-loading">⚠️ 요약 중 오류: '+esc(e.message)+'<br><br><button class="btn" onclick="runBriefing(true)">다시 시도</button></div>';
+    log("AI 브리핑 오류: "+e.message);
+  }finally{ briefBusy=false; }
+}
+function renderBriefing(issues, posts, model, fromCache){
+  const panel=$("#aiPanel"); panel.style.display="block";
+  issues = (issues||[]).slice().sort((a,b)=>(b.importance||0)-(a.importance||0));
+  panel.innerHTML =
+    '<h2>🤖 오늘의 AI 브리핑<span class="spacer"></span>'+
+    '<button class="btn" onclick="runBriefing(true)">다시 생성</button> '+
+    '<button class="btn" onclick="renderKeyForm()">설정</button> '+
+    '<button class="btn" onclick="$(\'#aiPanel\').style.display=\'none\'">닫기</button></h2>'+
+    issues.map(is=>{
+      const stars = "★".repeat(Math.max(1,Math.min(5,is.importance||1)));
+      const refs = (is.refs||[]).slice(0,5).map(i=>{
+        const p = posts[i]; if(!p) return "";
+        return '<a href="'+esc(p.u)+'" target="_blank" rel="noopener">↳ <span class="rc">'+esc(p.c)+'</span> '+esc(p.t.length>45?p.t.slice(0,45)+"…":p.t)+'</a>';
+      }).join("");
+      return '<div class="ai-issue"><div class="head"><span class="imp">'+stars+'</span>'+esc(is.title)+
+        '<span class="tchip">#'+esc(is.topic||"기타")+'</span></div>'+
+        '<div class="sum">'+esc(is.summary)+'</div>'+
+        (refs?'<div class="refs">'+refs+'</div>':"")+'</div>';
+    }).join("")+
+    '<div class="ai-meta">'+(fromCache?"오늘 생성된 브리핑입니다 (캐시). 새 데이터로 원하면 \"다시 생성\". ":"")+
+    '모델: '+esc(AI_MODELS[model]||model)+' · 요약은 게시글 제목 기반 추정이라 부정확할 수 있습니다 — 원문 링크로 확인하세요.</div>';
+}
+function renderKeyForm(){
+  const panel=$("#aiPanel"); panel.style.display="block";
+  const cur = localStorage.getItem("tr_apikey");
+  const curModel = localStorage.getItem("tr_aimodel")||"claude-opus-4-8";
+  panel.innerHTML =
+    '<h2>🤖 AI 브리핑 설정<span class="spacer"></span><button class="btn" onclick="$(\'#aiPanel\').style.display=\'none\'">닫기</button></h2>'+
+    '<div class="keyform">'+
+    'Anthropic API 키를 입력하면 인기글을 AI가 핵심 이슈로 요약해 줍니다.<br>'+
+    '키는 <b>이 브라우저에만 저장</b>되며, Anthropic 서버 외에는 어디로도 전송되지 않습니다. 키 발급: <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a><br>'+
+    '<input type="password" id="keyInput" placeholder="sk-ant-..." value="'+(cur?esc(cur):"")+'">'+
+    '<br>모델: <select id="modelSel">'+Object.entries(AI_MODELS).map(([k,v])=>'<option value="'+k+'"'+(k===curModel?" selected":"")+'>'+v+'</option>').join("")+'</select><br>'+
+    '<button class="btn primary" onclick="saveKey()">저장하고 브리핑 실행</button> '+
+    (cur?'<button class="btn" onclick="localStorage.removeItem(\'tr_apikey\');renderKeyForm()">키 삭제</button>':"")+
+    '</div>';
+}
+function saveKey(){
+  const v = $("#keyInput").value.trim();
+  if(!v || !v.startsWith("sk-ant")){ alert("키가 올바르지 않습니다. sk-ant 로 시작하는 키를 입력해 주세요."); return; }
+  localStorage.setItem("tr_apikey", v);
+  localStorage.setItem("tr_aimodel", $("#modelSel").value);
+  runBriefing(true);
+}
+$("#aiBtn").onclick = ()=>runBriefing(false);
 
 /* ============ 이벤트 ============ */
 $("#refreshBtn").onclick = ()=>{ if(viewingDate){ viewingDate=null; fillDaySelect(); } refreshAll(); };
