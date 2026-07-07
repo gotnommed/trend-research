@@ -122,7 +122,8 @@ footer a{color:var(--txt2)}
     <a href="https://moamoa.kr" target="_blank">모아모아</a> ·
     <a href="https://www.issuelink.co.kr/community/listview" target="_blank">이슈링크</a> ·
     <a href="https://jamnanda.com" target="_blank">잼난다</a> ·
-    <a href="https://todaybeststory.com/communities" target="_blank">오늘의베스트</a><br>
+    <a href="https://todaybeststory.com/communities" target="_blank">오늘의베스트</a> ·
+    <a href="https://gall.dcinside.com/mgallery/board/lists/?id=stockus&exception_mode=recommend" target="_blank">디시 경제갤</a><br>
     매일 열어보면 그날 데이터가 자동 저장됩니다. 상단 날짜 선택으로 지난 날짜를 다시 볼 수 있어요. (이 브라우저에만 저장됨)<br>
     Chrome으로 여는 것을 권장합니다. 새로고침을 너무 빠르게 연타하면 무료 중계 서버 제한으로 일부 소스가 일시적으로 실패할 수 있어요 (1~2분 뒤 재시도).
   </footer>
@@ -359,6 +360,53 @@ function parseTodaybest(text){
   return out;
 }
 
+// 6) 디시 경제 갤러리 개념글 (corsproxy 경유; 디시가 다른 중계는 차단)
+const DC_GALLS = [
+  {gid:"stockus", m:true,  name:"미주갤"},
+  {gid:"neostock", m:false, name:"주갤"},
+  {gid:"immovables", m:false, name:"부갤"}
+];
+function parseDc(html, gname){
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const out=[];
+  doc.querySelectorAll("tr.ub-content").forEach(tr=>{
+    if(tr.querySelector(".icon_ad,.icon_notice,.icon_survey")) return;
+    const numEl = tr.querySelector(".gall_num");
+    if(!numEl || !/^\d+$/.test(numEl.textContent.trim())) return;
+    const a = tr.querySelector(".gall_tit a"); if(!a) return;
+    const reply = tr.querySelector(".reply_num");
+    let href = a.getAttribute("href")||"";
+    if(href.startsWith("/")) href = "https://gall.dcinside.com"+href;
+    const dateEl = tr.querySelector(".gall_date");
+    out.push({
+      title: a.textContent.trim(),
+      url: href.replace(/&exception_mode=recommend&page=\d+/,""),
+      community: gname,
+      views: num(((tr.querySelector(".gall_count")||{}).textContent||"").trim().replace(/,/g,"")),
+      comments: reply ? num((reply.textContent.match(/\d+/)||[])[0]) : null,
+      ts: dateEl ? parseKst(dateEl.getAttribute("title")||"") : null
+    });
+  });
+  const cut = Date.now() - 3*24*3600*1000; // 최근 3일 개념글만
+  return out.filter(p=>p.title && p.url && (!p.ts || p.ts>=cut))
+            .sort((a,b)=>(b.views||0)-(a.views||0)).slice(0,25);
+}
+async function loadDc(){
+  const all=[];
+  await Promise.allSettled(DC_GALLS.map(async g=>{
+    const base = "https://gall.dcinside.com/"+(g.m?"mgallery/":"")+"board/lists/?id="+g.gid+"&exception_mode=recommend";
+    for(const u of [P.corsproxy(base), P.allorigins(base), P.codetabs(base)]){
+      try{
+        const t = await fetchText(u,{timeout:20000});
+        const items = parseDc(t, g.name);
+        if(items.length>=2){ all.push(...items); log("디시 "+g.name+": "+items.length+"건"); return; }
+        throw new Error("파싱 "+items.length+"건");
+      }catch(e){ log("디시 "+g.name+" 실패: "+(e.name==="AbortError"?"시간초과":e.message)); }
+    }
+  }));
+  return all;
+}
+
 /* ============ 소스 정의 ============ */
 const SOURCES = [
   { id:"moamoa", name:"모아모아",
@@ -377,7 +425,8 @@ const SOURCES = [
     attempts: chain("https://jamnanda.com/").filter(a=>a.via!=="jina").map(a=>({...a,parse:parseJamnanda}))
       .concat([ {url:P.jina("https://jamnanda.com/"),via:"jina-html",headers:{"x-return-format":"html"},parse:parseJamnanda} ]) },
   { id:"todaybest", name:"오늘의베스트",
-    attempts: [ {url:P.jina("https://todaybeststory.com/communities"),via:"jina",parse:parseTodaybest} ] }
+    attempts: [ {url:P.jina("https://todaybeststory.com/communities"),via:"jina",parse:parseTodaybest} ] },
+  { id:"dcecon", name:"디시 경제갤", topic:"경제·재테크", load: loadDc }
 ];
 const srcState = {}; // id → {status, count, error}
 SOURCES.forEach(s=>srcState[s.id]={status:"idle",count:0});
@@ -390,6 +439,22 @@ let lastLoaded = null;
 async function loadSource(src){
   srcState[src.id]={status:"loading",count:0};
   renderStatus();
+  if(src.load){ // 갤러리 여러 개를 합쳐오는 커스텀 로더 (디시 경제갤)
+    try{
+      const items = await src.load();
+      if(!items.length) throw new Error("가져온 글 없음");
+      items.forEach(p=>{ p.src=[src.id]; p.topic = src.topic || classify(p.title); });
+      srcState[src.id]={status:"ok",count:items.length};
+      log(src.name+" 성공: 총 "+items.length+"건");
+      renderStatus();
+      return items;
+    }catch(e){
+      log(src.name+" 실패: "+e.message);
+      srcState[src.id]={status:"fail",count:0};
+      renderStatus();
+      return [];
+    }
+  }
   for(const at of src.attempts){
     try{
       log(src.name+" 시도: "+at.via);
@@ -449,7 +514,7 @@ async function retrySource(id){
 function saveSnapshot(){
   try{
     const key = "tr_snap_"+todayKey();
-    const slim = rawPosts.slice(0,900).map(p=>({t:p.title,u:p.url,c:p.community,v:p.views,m:p.comments,s:p.ts,r:p.src}));
+    const slim = rawPosts.slice(0,900).map(p=>({t:p.title,u:p.url,c:p.community,v:p.views,m:p.comments,s:p.ts,r:p.src,p:p.topic}));
     localStorage.setItem(key, JSON.stringify({at:Date.now(), posts:slim}));
     // 30일 초과분 정리
     const keys = Object.keys(localStorage).filter(k=>k.startsWith("tr_snap_")).sort();
@@ -471,7 +536,7 @@ function loadSnapshot(date){
   const raw = localStorage.getItem("tr_snap_"+date);
   if(!raw){ alert("저장된 데이터가 없습니다"); return; }
   const data = JSON.parse(raw);
-  rawPosts = data.posts.map(p=>({title:p.t,url:p.u,community:p.c,views:p.v,comments:p.m,ts:p.s,src:p.r||["?"],topic:classify(p.t)}));
+  rawPosts = data.posts.map(p=>({title:p.t,url:p.u,community:p.c,views:p.v,comments:p.m,ts:p.s,src:p.r||["?"],topic:p.p||classify(p.t)}));
   $("#updated").textContent = date+" 저장본 보는 중 ("+new Date(data.at).toLocaleString("ko-KR")+" 저장) · "+rawPosts.length+"건";
   $("#noticeArea").innerHTML = "";
   SOURCES.forEach(s=>srcState[s.id]={status:"idle",count:rawPosts.filter(p=>p.src.includes(s.id)).length});
