@@ -502,6 +502,18 @@ async function loadCrypto(){
         });
         all.push(...items); log("크립토 온체인DEX: "+items.length+"건");
       }catch(e){ log("크립토 온체인DEX 실패: "+e.message); }
+    })(),
+    (async()=>{ // 코인게코 섹터(카테고리) 등락: 오늘 돈이 도는 내러티브 (시총 $3억 이상만)
+      try{
+        const d = JSON.parse(await fetchText("https://api.coingecko.com/api/v3/coins/categories?order=market_cap_change_24h_desc",{timeout:15000}));
+        const items = (Array.isArray(d)?d:[]).filter(c=>(c.market_cap||0)>=3e8 && isFinite(c.market_cap_change_24h))
+          .slice(0,10).map((c,i)=>({
+            title:"크립토 내러티브 "+(i+1)+"위 — "+(c.name||"").trim()+" "+fmtPct(c.market_cap_change_24h)+" (시총 $"+((c.market_cap||0)/1e9).toFixed(1)+"B)",
+            url:"https://www.coingecko.com/en/categories/"+(c.id||""),
+            community:"코인섹터", views:null, comments:null, ts:Date.now(), topic:"크립토"
+          }));
+        all.push(...items); log("크립토 코인섹터: "+items.length+"건");
+      }catch(e){ log("크립토 코인섹터 실패: "+e.message); }
     })()
   ]);
   return all;
@@ -726,7 +738,7 @@ function rowHtml(p, idx){
     '<span>👁 <b>'+fmt(p.views)+'</b></span><span>💬 <b>'+fmt(p.comments)+'</b></span>'+
     (p.ts?'<span>'+agoText(p.ts)+'</span>':"")+
     '<span>'+esc(srcs)+'</span>'+
-    (["코인게코","온체인DEX","스탁트윗","HN"].includes(p.community)?'<button class="whyBtn" data-t="'+encodeURIComponent(p.title)+'" onclick="narrative(this)">🔍 왜 뜸?</button>':"")+
+    (["코인게코","온체인DEX","스탁트윗","HN","코인섹터"].includes(p.community)?'<button class="whyBtn" data-t="'+encodeURIComponent(p.title)+'" onclick="narrative(this)">🔍 왜 뜸?</button>':"")+
     '</div></div></div>';
 }
 
@@ -790,7 +802,7 @@ function briefPrompt(posts){
 - title: 이슈를 한 줄로 (한국어).
 - summary: 2~3문장. 무슨 일인지 + 왜 화제인지. 게시글 제목만으로 추정한 부분은 단정하지 말 것 (한국어, 영어 제목은 번역해 반영).
 - topic: 정치/경제·재테크/크립토/스포츠/연예·방송/게임/IT·과학/국제/사회·사건/기타 중 하나.
-- 크립토 항목(코인게코 트렌딩, 온체인 밈코인)이 있으면 반드시 "지금 뜨는 밈코인/코인" 이슈 1개로 묶어서 포함하라.
+- 크립토 항목(코인게코 트렌딩, 온체인 밈코인, 크립토 내러티브 섹터)이 있으면 반드시 "오늘의 크립토 내러티브" 이슈 1개로 묶어서 포함하라 (어떤 섹터로 돈이 돌고 어떤 밈코인이 뜨는지).
 - importance: 1~5 정수 (5=가장 중요). importance 내림차순으로 정렬.
 - refs: 관련 게시글 번호 배열 (최대 5개, 반드시 실제 관련 글만).
 
