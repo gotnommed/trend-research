@@ -88,6 +88,12 @@ label.tgl{display:inline-flex;align-items:center;gap:5px;font-size:13px;font-wei
 .keyform input{width:100%;max-width:420px;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px;margin:4px 0}
 .ai-meta{font-size:11.5px;color:var(--txt3);margin-top:10px}
 .ai-loading{padding:20px;text-align:center;color:var(--txt2);font-size:13px}
+.whyBtn{font-size:11px;font-weight:700;color:var(--hot);background:#fff0e6;border:none;border-radius:5px;padding:0 6px;cursor:pointer;font-family:inherit}
+.whyBtn:hover{background:#ffe3d1}
+.narr{font-size:13.5px;color:var(--txt);line-height:1.75;max-width:75ch;white-space:pre-wrap;word-break:break-word}
+.narr-src{margin-top:10px;border-top:1px solid var(--line);padding-top:8px;display:flex;flex-direction:column;gap:3px}
+.narr-src a{font-size:12px;color:var(--txt3);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.narr-src a:hover{color:var(--accent)}
 details.diag{margin-top:24px;font-size:12px;color:var(--txt3)}
 details.diag pre{background:#f0f1f4;border-radius:8px;padding:10px;white-space:pre-wrap;word-break:break-all;max-height:240px;overflow:auto;margin-top:8px}
 footer{margin-top:28px;font-size:12px;color:var(--txt3);line-height:2}
@@ -719,7 +725,9 @@ function rowHtml(p, idx){
     (p.topic?'<span>#'+esc(p.topic)+'</span>':"")+
     '<span>👁 <b>'+fmt(p.views)+'</b></span><span>💬 <b>'+fmt(p.comments)+'</b></span>'+
     (p.ts?'<span>'+agoText(p.ts)+'</span>':"")+
-    '<span>'+esc(srcs)+'</span></div></div></div>';
+    '<span>'+esc(srcs)+'</span>'+
+    (["코인게코","온체인DEX","스탁트윗","HN"].includes(p.community)?'<button class="whyBtn" data-t="'+encodeURIComponent(p.title)+'" onclick="narrative(this)">🔍 왜 뜸?</button>':"")+
+    '</div></div></div>';
 }
 
 function render(){
@@ -728,7 +736,7 @@ function render(){
   const el = $("#list");
   if(!posts.length){ el.innerHTML = '<div class="empty">표시할 글이 없습니다</div>'; return; }
   if(viewMode==="flat"){
-    el.innerHTML = posts.slice(0,300).map((p,i)=>rowHtml(p,i)).join("");
+    el.innerHTML = posts.slice(0,600).map((p,i)=>rowHtml(p,i)).join("");
   }else{
     const keyOf = viewMode==="topic" ? (p=>p.topic||"유머·잡담") : (p=>p.community);
     const groups = new Map();
@@ -858,7 +866,8 @@ function renderBriefing(issues, posts, model, fromCache){
         return '<a href="'+esc(p.u)+'" target="_blank" rel="noopener">↳ <span class="rc">'+esc(p.c)+'</span> '+esc(p.t.length>45?p.t.slice(0,45)+"…":p.t)+'</a>';
       }).join("");
       return '<div class="ai-issue"><div class="head"><span class="imp">'+stars+'</span>'+esc(is.title)+
-        '<span class="tchip">#'+esc(is.topic||"기타")+'</span></div>'+
+        '<span class="tchip">#'+esc(is.topic||"기타")+'</span>'+
+        '<button class="whyBtn" data-t="'+encodeURIComponent(is.title)+'" onclick="narrative(this)">🔍 더 조사</button></div>'+
         '<div class="sum">'+esc(is.summary)+'</div>'+
         (refs?'<div class="refs">'+refs+'</div>':"")+'</div>';
     }).join("")+
@@ -888,6 +897,80 @@ function saveKey(){
   runBriefing(true);
 }
 $("#aiBtn").onclick = ()=>runBriefing(false);
+
+/* ============ 내러티브 조사 (웹 검색: Anthropic 서버가 검색 실행) ============ */
+const NARR_CACHE = {}; // 제목 → 결과 (세션 동안만)
+async function narrative(el){
+  const title = decodeURIComponent(el.dataset.t);
+  const key = localStorage.getItem("tr_apikey");
+  if(!key){ renderKeyForm(); window.scrollTo({top:0,behavior:"smooth"}); return; }
+  const panel=$("#aiPanel"); panel.style.display="block";
+  window.scrollTo({top:0,behavior:"smooth"});
+  if(NARR_CACHE[title]){ renderNarrative(title, NARR_CACHE[title]); return; }
+  if(briefBusy) return; briefBusy=true;
+  const model = localStorage.getItem("tr_aimodel") || "claude-opus-4-8";
+  panel.innerHTML='<div class="ai-loading">🔍 웹을 검색해 내러티브를 조사하는 중…<br><small>"'+esc(title.slice(0,60))+'"<br>(검색 3~5회, 30초~1분 · 1회 약 100~300원)</small></div>';
+  try{
+    const prompt = `오늘 한국/글로벌 커뮤니티 트렌드 대시보드에 이 항목이 올라왔다:
+"${title}"
+
+웹을 검색해서 (가능하면 X/트위터·레딧 논의, 커뮤니티 글, 뉴스 포함) 이게 왜 지금 화제인지 조사하라. 한국어로 정리:
+
+① 결론 한 줄 (왜 떴나)
+② 내러티브/배경 — 무슨 일이 있었고, 어디서(X/레딧/유튜버/거래소 상장 등) 시작됐고, 누가 밀고 있는지
+③ 밈코인이라면 리스크 신호 — 러그풀 가능성, 유동성, 과열 여부
+④ 검색으로 확인 안 되는 부분은 "추측"이라고 명시
+
+번호 붙인 짧은 문단으로, 전체 400자 이내로 간결하게.`;
+    let messages=[{role:"user",content:prompt}];
+    let data, loops=0;
+    while(true){
+      const r = await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST",
+        headers:{"content-type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+        body:JSON.stringify({ model, max_tokens:3000,
+          tools:[{type:"web_search_20250305", name:"web_search", max_uses:5}],
+          messages })
+      });
+      data = await r.json();
+      if(!r.ok){
+        const msg=(data.error&&data.error.message)||("HTTP "+r.status);
+        panel.innerHTML='<div class="ai-loading">⚠️ 조사 실패<br><small>'+esc(msg)+'</small><br><br><button class="btn" onclick="renderKeyForm()">키 설정</button></div>';
+        log("내러티브 실패: "+r.status+" "+msg); return;
+      }
+      if(data.stop_reason==="pause_turn" && loops<3){ // 서버측 검색이 길어지면 이어서 재요청
+        messages=[{role:"user",content:prompt},{role:"assistant",content:data.content}];
+        loops++; continue;
+      }
+      break;
+    }
+    const text = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("");
+    const srcs=[]; const seenU=new Set();
+    (data.content||[]).forEach(b=>{
+      (b.citations||[]).forEach(c=>{ if(c.url && !seenU.has(c.url)){ seenU.add(c.url); srcs.push({url:c.url,title:c.title||c.url}); } });
+      if(b.type==="web_search_tool_result" && Array.isArray(b.content)){
+        b.content.forEach(rr=>{ if(rr.url && !seenU.has(rr.url)){ seenU.add(rr.url); srcs.push({url:rr.url,title:rr.title||rr.url}); } });
+      }
+    });
+    const result={text, srcs:srcs.slice(0,8)};
+    NARR_CACHE[title]=result;
+    renderNarrative(title, result);
+    log("내러티브 성공: "+title.slice(0,30)+" (출처 "+result.srcs.length+"개)");
+  }catch(e){
+    panel.innerHTML='<div class="ai-loading">⚠️ 조사 중 오류: '+esc(e.message)+'</div>';
+    log("내러티브 오류: "+e.message);
+  }finally{ briefBusy=false; }
+}
+function renderNarrative(title, res){
+  const panel=$("#aiPanel"); panel.style.display="block";
+  panel.innerHTML =
+    '<h2>🔍 내러티브: '+esc(title.length>50?title.slice(0,50)+"…":title)+'<span class="spacer"></span>'+
+    '<button class="btn" onclick="$(\'#aiPanel\').style.display=\'none\'">닫기</button></h2>'+
+    '<div class="narr">'+esc(res.text)+'</div>'+
+    (res.srcs.length?'<div class="narr-src"><b style="font-size:12px;color:var(--txt2)">출처</b>'+
+      res.srcs.map(s=>'<a href="'+esc(s.url)+'" target="_blank" rel="noopener">↗ '+esc(s.title)+'</a>').join("")+'</div>':"")+
+    '<div class="ai-meta">웹 검색 기반 요약입니다. 투자 판단 전 반드시 출처 원문을 확인하세요.</div>';
+}
 
 /* ============ 이벤트 ============ */
 $("#refreshBtn").onclick = ()=>{ if(viewingDate){ viewingDate=null; fillDaySelect(); } refreshAll(); };
