@@ -246,7 +246,8 @@ function comm(name){ if(!name) return "기타"; name=String(name).trim(); return
 /* ============ 주제 자동 분류 (제목 키워드 기반) ============ */
 const TOPICS = [
   ["정치", /대통령|민주당|국민의힘|국힘|의원|정부|국회|계엄|탄핵|선거|대선|총선|여당|야당|장관|검찰|특검|법원|판결|재판|판사|이재명|윤석열|김건희|한동훈|조국|지지율|공약|보수|진보|좌파|우파|정치|여론조사|청문회|개헌|북한|김정은|보완수사|부대변인|대변인|민주|국정|내란/],
-  ["경제·재테크", /주식|코스피|코스닥|나스닥|미장|국장|반도체|삼성전자|하이닉스|SK하이닉스|엔비디아|환율|금리|부동산|집값|월세|전세|아파트|분양|청약|코인|비트코인|이더리움|물가|연금|세금|대출|배당|손절|익절|매수|매도|폭락|급등|하락|상승장|재테크|예금|적금|증시|투자|경제|무역|관세|수출|기업|실적|파산|주가|호가|시총|네이버페이|포인트|적립/],
+  ["크립토", /비트코인|이더리움|리플\b|솔라나|도지코인?|시바이누|밈코인|코인|크립토|바이낸스|업비트|빗썸|김프|온체인|스테이블|NFT|알트코인|에어드랍|디파이|DeFi|BTC|ETH\b|XRP|사토시|채굴|반감기|현물\s?ETF/],
+  ["경제·재테크", /주식|코스피|코스닥|나스닥|미장|국장|반도체|삼성전자|하이닉스|SK하이닉스|엔비디아|환율|금리|부동산|집값|월세|전세|아파트|분양|청약|물가|연금|세금|대출|배당|손절|익절|매수|매도|폭락|급등|하락|상승장|재테크|예금|적금|증시|투자|경제|무역|관세|수출|기업|실적|파산|주가|호가|시총|네이버페이|포인트|적립/],
   ["스포츠", /축구|야구|농구|배구|골프|손흥민|이강인|김민재|메시|호날두|음바페|홀란드?|PK|페널티|국대|국가대표|월드컵|프리미어|EPL|라리가|분데스|챔스|KBO|MLB|NBA|감독|구단|이적|우승|실축|올림픽|유벤투스|맨유|맨시티|토트넘|아스날|바르샤|레알|두산|한화|롯데자이언츠|기아타이거즈|LG트윈스|삼성라이온즈|SSG|키움|골자|득점|경기력|선발|타자|투수|홈런|선제골|역전골|자책골|결승골|골키퍼|풀백|수비수|공격수|미드필더|태클|전반전?|후반전?|경기요약|승부차기|하이라이트|해트트릭|오프사이드|도움\s?기록|승격|강등|리그\b|살라|로메로|이브라힘|동수칸/],
   ["연예·방송", /아이돌|배우|가수|걸그룹|보이그룹|드라마|영화|예능|넷플릭스|넷플|디즈니|콘서트|데뷔|컴백|열애|뉴진스|아이브|에스파|BTS|방탄|블랙핑크|르세라핌|임영웅|유재석|출연|시청률|팬미팅|뮤비|앨범|음원|OTT|개봉|관객|배급|여배우|AV|섹시화보|화보/],
   ["게임", /게임|롤\b|LOL|리그오브레전드|스팀|닌텐도|플스|PS5|엑박|Xbox|메이플|로스트아크|로아|발로란트|오버워치|디아블로|와우\b|피파\b|FC온라인|패치노트|신작|출시일|콘솔|겜\b|페이커|e스포츠|젠지|T1/],
@@ -466,6 +467,40 @@ async function loadUS(){
   return all;
 }
 
+// 8) 크립토: 코인게코 트렌딩 + 온체인 DEX 트렌딩 풀 (둘 다 CORS 개방 → 중계 불필요)
+function fmtPct(x){ x=Number(x); if(!isFinite(x)) return ""; const s=x>=0?"+":""; return "(24h "+s+(Math.abs(x)>=1000?Math.round(x).toLocaleString():x.toFixed(1))+"%)"; }
+function fmtVol(v){ v=Number(v); if(!isFinite(v)||!v) return ""; return "(24h 거래 $"+(v>=1e6?(v/1e6).toFixed(1)+"M":Math.round(v/1e3)+"K")+")"; }
+async function loadCrypto(){
+  const all=[];
+  await Promise.allSettled([
+    (async()=>{ // 코인게코: 검색이 급증한 코인 15개
+      try{
+        const d = JSON.parse(await fetchText("https://api.coingecko.com/api/v3/search/trending",{timeout:15000}));
+        const items = (d.coins||[]).map((c,i)=>{ const it=c.item||{};
+          const pct = ((it.data||{}).price_change_percentage_24h||{}).usd;
+          return { title:"코인게코 트렌딩 "+(i+1)+"위 — $"+(it.symbol||"?")+" "+(it.name||"")+" "+fmtPct(pct),
+            url:"https://www.coingecko.com/en/coins/"+(it.id||it.slug||""),
+            community:"코인게코", views:null, comments:null, ts:Date.now(), topic:"크립토" };
+        });
+        all.push(...items); log("크립토 코인게코: "+items.length+"건");
+      }catch(e){ log("크립토 코인게코 실패: "+e.message); }
+    })(),
+    (async()=>{ // 온체인 DEX 트렌딩 풀: 밈코인이 가장 먼저 잡히는 곳
+      try{
+        const d = JSON.parse(await fetchText("https://api.geckoterminal.com/api/v2/networks/trending_pools?page=1",{timeout:15000}));
+        const items = (d.data||[]).slice(0,15).map((p,i)=>{ const a=p.attributes||{};
+          const parts=(p.id||"").split("_"); const net=parts.shift(); const addr=parts.join("_");
+          return { title:"온체인 밈코인 "+(i+1)+"위 — "+(a.name||"?")+" "+fmtVol((a.volume_usd||{}).h24),
+            url:"https://www.geckoterminal.com/"+net+"/pools/"+addr,
+            community:"온체인DEX", views:null, comments:null, ts:Date.now(), topic:"크립토" };
+        });
+        all.push(...items); log("크립토 온체인DEX: "+items.length+"건");
+      }catch(e){ log("크립토 온체인DEX 실패: "+e.message); }
+    })()
+  ]);
+  return all;
+}
+
 /* ============ 소스 정의 ============ */
 const SOURCES = [
   { id:"moamoa", name:"모아모아",
@@ -486,7 +521,8 @@ const SOURCES = [
   { id:"todaybest", name:"오늘의베스트",
     attempts: [ {url:P.jina("https://todaybeststory.com/communities"),via:"jina",parse:parseTodaybest} ] },
   { id:"dcecon", name:"디시 경제갤", topic:"경제·재테크", load: loadDc },
-  { id:"usecon", name:"미국(레딧·HN)", load: loadUS }
+  { id:"usecon", name:"미국(주식·HN)", load: loadUS },
+  { id:"crypto", name:"크립토", load: loadCrypto }
 ];
 const srcState = {}; // id → {status, count, error}
 SOURCES.forEach(s=>srcState[s.id]={status:"idle",count:0});
@@ -728,12 +764,12 @@ function briefPosts(){ // 전체 데이터에서 중복 합친 조회수 상위 
   dedupe=true; catFilter="all"; topicFilter="all"; query=""; sortBy="views";
   const posts = buildPosts().slice(0,110);
   dedupe=saveDedupe; catFilter=saveCat; topicFilter=saveTopic; query=saveQ; sortBy=saveSort;
-  // 조회수가 없는 미국 화제종목은 정렬에서 밀리므로 명시적으로 포함
+  // 조회수가 없는 미국·크립토 항목은 정렬에서 밀리므로 명시적으로 포함
   const seen = new Set(posts.map(p=>normTitle(p.title)));
-  rawPosts.filter(p=>p.community==="스탁트윗"||p.community==="HN").forEach(p=>{
+  rawPosts.filter(p=>p.src.includes("usecon")||p.src.includes("crypto")).forEach(p=>{
     if(!seen.has(normTitle(p.title))){ seen.add(normTitle(p.title)); posts.push(p); }
   });
-  return posts.slice(0,150);
+  return posts.slice(0,180);
 }
 function briefPrompt(posts){
   const list = posts.map((p,i)=>`${i}|${p.community}|${p.topic}|조회${p.views??"?"}|댓글${p.comments??"?"}|${p.title}`).join("\n");
@@ -745,7 +781,8 @@ function briefPrompt(posts){
 - 같은 사건을 다루는 여러 글은 하나의 이슈로 묶는다.
 - title: 이슈를 한 줄로 (한국어).
 - summary: 2~3문장. 무슨 일인지 + 왜 화제인지. 게시글 제목만으로 추정한 부분은 단정하지 말 것 (한국어, 영어 제목은 번역해 반영).
-- topic: 정치/경제·재테크/스포츠/연예·방송/게임/IT·과학/국제/사회·사건/기타 중 하나.
+- topic: 정치/경제·재테크/크립토/스포츠/연예·방송/게임/IT·과학/국제/사회·사건/기타 중 하나.
+- 크립토 항목(코인게코 트렌딩, 온체인 밈코인)이 있으면 반드시 "지금 뜨는 밈코인/코인" 이슈 1개로 묶어서 포함하라.
 - importance: 1~5 정수 (5=가장 중요). importance 내림차순으로 정렬.
 - refs: 관련 게시글 번호 배열 (최대 5개, 반드시 실제 관련 글만).
 
